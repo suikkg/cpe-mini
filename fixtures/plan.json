@@ -1,0 +1,31 @@
+{
+  "plan_id": "demo",
+  "rounds": 1,
+  "warmup_secs": 2,
+  "specs": [
+    {
+      "title": "TCP-A",
+      "transport": "tcp",
+      "direction": "ab",
+      "target_mbps": 900.0,
+      "samples_ab": [120.0, 480.0, 948.0, 961.0, 944.0, 952.0, 950.0, 947.0],
+      "samples_ba": []
+    },
+    {
+      "title": "TCP-B",
+      "transport": "tcp",
+      "direction": "ab",
+      "target_mbps": 900.0,
+      "samples_ab": [100.0, 300.0, 851.0, 843.0, 862.0, 848.0, 855.0, 841.0],
+      "samples_ba": []
+    },
+    {
+      "title": "TCP-C",
+      "transport": "tcp",
+      "direction": "ab",
+      "target_mbps": 900.0,
+      "samples_ab": [],
+      "samples_ba": []
+    }
+  ]
+}

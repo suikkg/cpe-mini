@@ -1,0 +1,10 @@
+{
+  "plan_id": "broken",
+  "rounds": 1,
+  "specs": [
+    {
+      "title": "这份文件的 JSON 语法是坏的"
+      "transport": "tcp"
+    }
+  ]
+}

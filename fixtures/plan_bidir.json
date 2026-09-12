@@ -1,0 +1,23 @@
+{
+  "plan_id": "bidir",
+  "rounds": 2,
+  "warmup_secs": 2,
+  "specs": [
+    {
+      "title": "TCP 双向",
+      "transport": "tcp",
+      "direction": "bidir",
+      "target_mbps": 900.0,
+      "samples_ab": [100.0, 500.0, 955.0, 962.0, 948.0, 951.0],
+      "samples_ba": [90.0, 460.0, 941.0, 938.0, 945.0, 950.0]
+    },
+    {
+      "title": "UDP 单向",
+      "transport": "udp",
+      "direction": "ab",
+      "target_mbps": 0.0,
+      "samples_ab": [50.0, 200.0, 480.0, 495.0, 488.0, 492.0],
+      "samples_ba": []
+    }
+  ]
+}

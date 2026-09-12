@@ -1,0 +1,12 @@
+[package]
+name = "cpe-mini"
+version = "0.1.0"
+edition = "2021"
+description = "cpe-test 的教学缩微版：用固定样本跑通「配置 → 展开 → 执行 → 判定 → 报告」"
+
+# 依赖刻意只用真实项目也在用的这两个。
+# 真实 cpe-test 的 Cargo.toml 里还有 tiny_http / regex / chrono 等，
+# 那些等到扩展课再引入——先把主链路跑通。
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
