@@ -193,5 +193,5 @@ let rows: Vec<Row> = if failed_only {
 
 真卡住了，去读对应的真实项目代码 —— 那才是最权威的参考：
 
-- 扩展课 13 → `/Users/kk/uv/cpe_test/main/src/ping.rs`
-- 扩展课 14 → `/Users/kk/uv/cpe_test/main/src/master/webui/http.rs`
+- 扩展课 13 → `src/ping.rs`
+- 扩展课 14 → `src/master/webui/http.rs`

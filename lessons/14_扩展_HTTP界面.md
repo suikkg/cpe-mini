@@ -108,7 +108,7 @@ cargo run -- ui
 
 ## 7. 做完之后读真实代码
 
-`/Users/kk/uv/cpe_test/main/src/master/webui/`：
+`src/master/webui/`：
 
 - `http.rs` —— 监听、路由、鉴权、超时。看它怎么处理并发和取消
 - `plan.rs:13` `validated_config_from_request` —— 前端来的配置怎么校验（第 06 课见过）

@@ -48,8 +48,16 @@ TCP-C                         无有效数据    900 Mbps      NOT_EVALUATED
 
 它是真实项目 **cpe-test** 的缩微版。
 
-真实项目在 `/Users/kk/uv/cpe_test/main`：v6.4.0，分支 `feat/webui-vue`，
-92 个 `.rs` 文件、约 **7.6 万行**。这里是 9 个文件、**1891 行**。
+真实项目是 **[suikkg/cpe-test](https://github.com/suikkg/cpe-test)**（开源）：
+v6.4.0，分支 `feat/webui-vue`，92 个 `.rs` 文件、约 **7.6 万行**。
+这里是 9 个文件、**1891 行**。
+
+> **课程里所有的文件名和行号，都对应提交 `4e7e970`。**
+> 拼永久链接：`https://github.com/suikkg/cpe-test/blob/4e7e970/<路径>#L<行号>`
+> 例如 [`src/verdict.rs:21`](https://github.com/suikkg/cpe-test/blob/4e7e9701d711f64d86177eb213309c21d72a15d9/src/verdict.rs#L21)。
+>
+> 本地 clone 一份对照着读最方便。**下文写 `src/verdict.rs` 时，
+> 指的都是 cpe-test 仓库里的路径，不是本项目的。**
 
 缩了 40 倍，但**骨架一模一样**：
 
@@ -66,7 +74,7 @@ TCP-C                         无有效数据    900 Mbps      NOT_EVALUATED
 
 ## 先修
 
-先做完 `/Users/kk/rust/rust-starter`（零基础入门，12 课）。那边学语法，这边学结构。
+先做完隔壁的 `rust-starter`（零基础入门，12 课）。那边学语法，这边学结构。
 
 已经能看懂下面这些就可以直接开始：
 
@@ -351,7 +359,7 @@ cpe-mini/
 
 ## 做完之后
 
-回到 `/Users/kk/uv/cpe_test/main`，挑一个真实的简单字段
+回到 `cpe-test`，挑一个真实的简单字段
 （比如 `Row` 里的 `kind_label`），**只读不改**，从 `Row` 一路往回找到它的来源。
 
 能找到，就说明这套方法你已经会用了。
