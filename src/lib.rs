@@ -12,11 +12,19 @@
 //!   → report             落 rows.jsonl + 渲染摘要
 //! ```
 //!
+//! 报告存下来之后还有两个出口，都只读 `rows.jsonl`、不碰前面的链路：
+//!
+//! ```text
+//! rows.jsonl → compare   两轮对比，回归测试要的那张表
+//! rows.jsonl → report::to_csv   导出给 Excel
+//! ```
+//!
 //! 真实项目对应：`src/master/plan.rs` → `src/master/builder.rs` →
 //! `src/master/executor/` → `src/master/rate_window.rs` → `src/verdict.rs` →
 //! `src/report/`。
 
 pub mod builder;
+pub mod compare;
 pub mod executor;
 pub mod plan;
 pub mod rate_window;

@@ -48,6 +48,18 @@ pub struct Row {
     pub round: u32,
     /// 有效窗口的接收端 RX 平均，Mbps。`None` = 没形成可信平均。
     pub rx_avg: Option<f64>,
+    /// UDP 丢包率（百分比）。`None` = 没采到，**不是** 0%。
+    ///
+    /// 名字和真实项目的 `Row.udp_loss`（`src/report/model.rs:229`）一致。
+    /// 真实项目在旁边还有 `tcp_retransmits`、`load_latency`、`ping_loss`——
+    /// **全都是只作诊断、不参与判定的质量指标**，这是一整类字段，不是一个特例。
+    ///
+    /// 这个字段是后加的，老的 rows.jsonl 里没有它——靠 struct 上的
+    /// `#[serde(default)]` 读成 `None`，历史报告照常读得出来。
+    /// **这就是兼容面的全部代价：加字段时记得让它有默认值。**
+    ///
+    /// 它只是被报告带着走，不参与任何判定（ADR-17）。
+    pub udp_loss: Option<f64>,
 }
 
 /// 把执行结果摊平成行。
@@ -87,6 +99,7 @@ pub fn rows_from(outcomes: &[UnitOutcome]) -> Vec<Row> {
                 diagnostics: leg.verdict.diagnostics.clone(),
                 round: out.round,
                 rx_avg: leg.window.rx_avg,
+                udp_loss: leg.udp_loss,
             });
         }
     }
@@ -237,7 +250,133 @@ pub fn render(rows: &[Row]) -> String {
         }
     }
 
+    // 诊断：**不参与判定**，所以单独一段，并且把这句话写在标题里。
+    //
+    // 放在「接下来该做什么」下面是有意的：先回答「该不该放行」，
+    // 再给排障线索。反过来排的话，读的人会把诊断当成失败原因。
+    //
+    // 「值不值得说」由 executor 定（[`crate::executor::loss_worth_mentioning`]），
+    // 这里只负责显示。报告层自己判断一遍，就是第二份会漂的实现。
+    let mut notes: Vec<String> = Vec::new();
+    for row in rows {
+        if crate::executor::loss_worth_mentioning(row.udp_loss) {
+            notes.push(format!(
+                "  {} → 丢包率 {:.1}%",
+                row.task,
+                row.udp_loss.unwrap_or_default()
+            ));
+        }
+    }
+    if !notes.is_empty() {
+        out.push_str("\n诊断（不影响判定）：\n");
+        for n in notes {
+            out.push_str(&n);
+            out.push('\n');
+        }
+    }
+
     out
+}
+
+/// CSV 的列顺序。
+///
+/// **这是对外兼容面。** 别人的脚本会按列号取值（`awk -F, '{print $7}'`），
+/// 在中间插一列，所有下游脚本静默取错值——而且不会有任何报错。
+/// 要加字段就加在**末尾**，跟 `rows.jsonl` 加字段是同一条规矩。
+pub const CSV_COLUMNS: &[&str] = &[
+    "time",
+    "task_id",
+    "parent_id",
+    "task",
+    "transport",
+    "param",
+    "verdict",
+    "execution_status",
+    "reason_code",
+    "reason_detail",
+    "diagnostics",
+    "round",
+    "rx_avg",
+    "udp_loss",
+];
+
+/// 渲染成 CSV 文本。
+///
+/// ## 为什么开头有个看不见的字符
+///
+/// 文本以 `\u{feff}`（BOM）开头。Excel 在中文 Windows 上打开无 BOM 的 UTF-8
+/// CSV 会按 GBK 解码，整列中文变成乱码——用户的反馈是「你们的报告导出坏了」，
+/// 而实际上文件完全正确。加三个字节省掉一轮扯皮。
+///
+/// 真实项目导的是 xlsx（`src/report/xlsx.rs`），没有这个问题；但只要还导 CSV，
+/// 这个坑就一直在。
+pub fn to_csv(rows: &[Row]) -> String {
+    let mut out = String::from("\u{feff}");
+    out.push_str(&CSV_COLUMNS.join(","));
+    out.push('\n');
+
+    for row in rows {
+        let fields = [
+            row.time.clone(),
+            row.task_id.clone(),
+            row.parent_id.clone(),
+            row.task.clone(),
+            row.transport.clone(),
+            row.param.clone(),
+            row.verdict.label().to_string(),
+            row.execution_status.label().to_string(),
+            row.reason_code.as_str().to_string(),
+            row.reason_detail.clone(),
+            // 诊断是个数组，CSV 只有一维。用 ; 连接而不是 ,——
+            // 用 , 的话它会被转义成带引号的一整格，表格里读起来反而更乱。
+            row.diagnostics.join("; "),
+            row.round.to_string(),
+            // None 写成空字段，**不要写 0**：空的意思是「没有这个数」，
+            // 0 的意思是「测出来是 0」。写成 0 的报告没法用来排障。
+            opt_num(row.rx_avg),
+            opt_num(row.udp_loss),
+        ];
+        debug_assert_eq!(fields.len(), CSV_COLUMNS.len(), "列数和表头对不上");
+
+        let line: Vec<String> = fields.iter().map(|f| csv_field(f)).collect();
+        out.push_str(&line.join(","));
+        out.push('\n');
+    }
+
+    out
+}
+
+/// 存成 CSV 文件。
+pub fn write_csv(path: &Path, rows: &[Row]) -> Result<(), String> {
+    if let Some(dir) = path.parent() {
+        if !dir.as_os_str().is_empty() {
+            std::fs::create_dir_all(dir)
+                .map_err(|e| format!("创建目录 {} 失败：{e}", dir.display()))?;
+        }
+    }
+    std::fs::write(path, to_csv(rows)).map_err(|e| format!("写入 {} 失败：{e}", path.display()))
+}
+
+fn opt_num(v: Option<f64>) -> String {
+    match v {
+        Some(x) => format!("{x:.1}"),
+        None => String::new(),
+    }
+}
+
+/// CSV 转义。
+///
+/// 规则来自 RFC 4180：字段里含逗号、双引号、换行三者之一，就整个用双引号包起来，
+/// 里面的双引号写成两个。
+///
+/// 这件事看着琐碎，但漏了它的后果是**静默的**：一条标题里带逗号的测试
+/// 会把整行往右挤一格，后面所有列的值都错位，而文件本身照样能打开。
+fn csv_field(s: &str) -> String {
+    if s.contains(',') || s.contains('"') || s.contains('\n') || s.contains('\r') {
+        format!("\"{}\"", s.replace('"', "\"\""))
+    } else {
+        s.to_string()
+    }
 }
 
 /// 按显示宽度补空格。中文字符占 2 列，直接用 `len()` 会排歪。
@@ -290,6 +429,8 @@ mod tests {
                     target_mbps: 900.0,
                     samples_ab: vec![100.0, 500.0, 950.0, 960.0, 940.0, 950.0],
                     samples_ba: vec![],
+                    udp_loss_ab: None,
+                    udp_loss_ba: None,
                 },
                 Spec {
                     title: "TCP-B".into(),
@@ -298,6 +439,8 @@ mod tests {
                     target_mbps: 900.0,
                     samples_ab: vec![100.0, 300.0, 850.0, 840.0, 860.0, 850.0],
                     samples_ba: vec![],
+                    udp_loss_ab: None,
+                    udp_loss_ba: None,
                 },
                 Spec {
                     title: "TCP-C".into(),
@@ -306,6 +449,8 @@ mod tests {
                     target_mbps: 900.0,
                     samples_ab: vec![],
                     samples_ba: vec![],
+                    udp_loss_ab: None,
+                    udp_loss_ba: None,
                 },
             ],
         }
@@ -381,5 +526,104 @@ mod tests {
         assert!(text.contains("NOT_EVALUATED"));
         assert!(text.contains("无有效数据"));
         assert!(text.contains("总计 3 项"));
+    }
+
+    // ---- CSV 导出 ---------------------------------------------------------
+
+    #[test]
+    fn CSV每行的列数都和表头一样() {
+        let text = to_csv(&样例行());
+        let header_cols = CSV_COLUMNS.len();
+        for (i, line) in text.lines().enumerate() {
+            // 这里的样例里没有需要转义的字段，可以直接按逗号数
+            assert_eq!(
+                line.split(',').count(),
+                header_cols,
+                "第 {} 行列数对不上：{line}",
+                i + 1
+            );
+        }
+    }
+
+    #[test]
+    fn CSV表头顺序不能变() {
+        let text = to_csv(&[]);
+        let first = text.lines().next().unwrap();
+        // 去掉 BOM 再比
+        assert_eq!(first.trim_start_matches('\u{feff}'), CSV_COLUMNS.join(","));
+        // 前几列的顺序被下游脚本依赖，钉死
+        assert_eq!(CSV_COLUMNS[0], "time");
+        assert_eq!(CSV_COLUMNS[6], "verdict");
+        // 新字段只能加在末尾
+        assert_eq!(*CSV_COLUMNS.last().unwrap(), "udp_loss");
+    }
+
+    #[test]
+    fn 带逗号和引号的字段会被转义() {
+        assert_eq!(csv_field("普通"), "普通");
+        assert_eq!(csv_field("a,b"), "\"a,b\"");
+        assert_eq!(csv_field("说\"这样\""), "\"说\"\"这样\"\"\"");
+        assert_eq!(csv_field("两\n行"), "\"两\n行\"");
+    }
+
+    #[test]
+    fn 标题里有逗号也不会把整行挤歪() {
+        let mut rows = 样例行();
+        rows[0].task = "TCP-A, 近距离".to_string();
+        let text = to_csv(&rows);
+        let line = text.lines().nth(1).unwrap();
+        assert!(
+            line.contains("\"TCP-A, 近距离\""),
+            "含逗号的字段必须整个包引号，否则后面所有列错位：{line}"
+        );
+    }
+
+    #[test]
+    fn 没有数的字段是空的不是0() {
+        let rows = 样例行();
+        // 第三条是 NOT_EVALUATED，没有 rx_avg
+        let text = to_csv(&rows);
+        let line = text.lines().nth(3).unwrap();
+        assert!(line.contains("NOT_EVALUATED"));
+        assert!(
+            line.ends_with(",,") || line.ends_with(","),
+            "rx_avg / udp_loss 没有值时要留空，写 0 会被当成「测出来是 0」：{line}"
+        );
+    }
+
+    #[test]
+    fn CSV开头有BOM() {
+        let text = to_csv(&样例行());
+        assert!(
+            text.starts_with('\u{feff}'),
+            "没有 BOM，Excel 在中文 Windows 上会把中文显示成乱码"
+        );
+    }
+
+    #[test]
+    fn 诊断单独一段并且说明不影响判定() {
+        let mut rows = 样例行();
+        rows[0].udp_loss = Some(31.4);
+        let text = render(&rows);
+
+        assert!(
+            text.contains("诊断（不影响判定）"),
+            "标题里要写明它不改判定"
+        );
+        assert!(text.contains("丢包率 31.4%"));
+        // 这一行的判定仍然是 PASS——整段诊断没有改写任何结论
+        assert!(text.contains("PASS"));
+
+        // 排在处置建议后面：先回答该不该放行，再给排障线索
+        let advice_at = text.find("接下来该做什么").unwrap();
+        let diag_at = text.find("诊断（不影响判定）").unwrap();
+        assert!(advice_at < diag_at, "诊断排在处置建议前面会被当成失败原因");
+    }
+
+    #[test]
+    fn 低丢包不进摘要() {
+        let mut rows = 样例行();
+        rows[0].udp_loss = Some(0.3);
+        assert!(!render(&rows).contains("诊断（不影响判定）"));
     }
 }

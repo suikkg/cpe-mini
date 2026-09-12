@@ -57,6 +57,19 @@ pub struct Spec {
     pub samples_ab: Vec<f64>,
     /// B→A 方向。单向计划留空。
     pub samples_ba: Vec<f64>,
+    /// A→B 方向的 UDP 丢包率（百分比，0~100）。
+    ///
+    /// 字段名的根与真实项目的 `Row.udp_loss`（`src/report/model.rs:229`）一致。
+    ///
+    /// **`None` 表示这一轮没采到丢包数据，不是「丢包 0%」。** 两者在报告里
+    /// 必须分得开：前者是「不知道」，后者是「知道，很好」。这就是它用
+    /// `Option<f64>` 而不是 `f64` 的全部理由——用 `f64` 的话，缺字段的旧计划
+    /// 会静默变成一份「全部零丢包」的完美报告。
+    ///
+    /// 它**不参与判定**，只进诊断，见 [`crate::executor`] 里的 ADR-17 注释。
+    pub udp_loss_ab: Option<f64>,
+    /// B→A 方向的丢包率。
+    pub udp_loss_ba: Option<f64>,
 }
 
 /// 校验结果：要么放行，要么给出**全部**问题。
@@ -106,6 +119,19 @@ pub fn validate(plan: &Plan) -> Result<(), Vec<String>> {
         }
         if spec.direction == "bidir" && spec.samples_ba.is_empty() && spec.samples_ab.is_empty() {
             errors.push(format!("{at} 是双向测试，但两个方向都没有样本"));
+        }
+
+        // 丢包率是百分比，超出 0~100 就是数据本身有问题。
+        // 拦在这里而不是等报告渲染时才发现：跑完十分钟拿到一份
+        // 「丢包 -3%」的报告，没人知道该信哪个数。
+        for (field, value) in [
+            ("udp_loss_ab", spec.udp_loss_ab),
+            ("udp_loss_ba", spec.udp_loss_ba),
+        ] {
+            let Some(v) = value else { continue };
+            if !v.is_finite() || !(0.0..=100.0).contains(&v) {
+                errors.push(format!("{at}.{field} 要在 0~100 之间，当前是 {v}"));
+            }
         }
     }
 
@@ -158,6 +184,8 @@ mod tests {
                 target_mbps: 900.0,
                 samples_ab: vec![900.0; 6],
                 samples_ba: vec![],
+                udp_loss_ab: None,
+                udp_loss_ba: None,
             }],
         }
     }
@@ -207,5 +235,48 @@ mod tests {
         let p: Plan = serde_json::from_str(json).unwrap();
         assert_eq!(p.rounds, 1);
         assert_eq!(p.warmup_secs, 2);
+    }
+
+    #[test]
+    fn 丢包率超出范围会被拦下() {
+        let mut plan = 合法计划();
+        plan.specs[0].udp_loss_ab = Some(120.0);
+        let errs = validate(&plan).unwrap_err();
+        assert!(
+            errs.iter()
+                .any(|e| e.contains("udp_loss_ab") && e.contains("0~100")),
+            "报错要说清楚哪个字段、合法范围是什么。当前：{errs:?}"
+        );
+
+        plan.specs[0].udp_loss_ab = Some(-1.0);
+        assert!(validate(&plan).is_err(), "负的丢包率也是坏数据");
+    }
+
+    #[test]
+    fn 没给丢包率不算错() {
+        let mut plan = 合法计划();
+        plan.specs[0].udp_loss_ab = None;
+        // None = 这一轮没采丢包，是完全正常的情况，不该拦
+        assert!(validate(&plan).is_ok());
+    }
+
+    #[test]
+    fn 旧计划没有丢包字段也读得出来() {
+        // 兼容面：加字段之前写的计划文件，今天还要能读。
+        let text = r#"{
+            "plan_id": "old",
+            "rounds": 1,
+            "warmup_secs": 2,
+            "specs": [{
+                "title": "TCP",
+                "transport": "tcp",
+                "direction": "ab",
+                "target_mbps": 900.0,
+                "samples_ab": [900.0],
+                "samples_ba": []
+            }]
+        }"#;
+        let plan: Plan = serde_json::from_str(text).expect("缺字段的旧计划必须还能读");
+        assert_eq!(plan.specs[0].udp_loss_ab, None, "缺字段读成 None，不是 0.0");
     }
 }

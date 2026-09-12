@@ -6,7 +6,8 @@
 //! 单元测试盯的是单个函数，集成测试盯的是**模块之间的接缝**——
 //! 一个模块单独测都对、拼起来就错，这类问题只有集成测试能抓到。
 
-use cpe_mini::report::{read_jsonl, rows_from, tally, write_jsonl};
+use cpe_mini::compare::{compare, DeltaKind};
+use cpe_mini::report::{read_jsonl, rows_from, tally, to_csv, write_jsonl, CSV_COLUMNS};
 use cpe_mini::verdict::Verdict;
 use cpe_mini::{builder, executor, plan, run_plan};
 use std::path::Path;
@@ -140,4 +141,127 @@ fn 只记录的计划不算失败() {
         0,
         "但它没有任何真问题"
     );
+}
+
+// ---- 两轮对比 -------------------------------------------------------------
+
+#[test]
+fn 两个固件版本的对比抓得出回归() {
+    let v1 = run_plan(Path::new("fixtures/plan_v1.json")).expect("v1 应该能跑通");
+    let v2 = run_plan(Path::new("fixtures/plan_v2.json")).expect("v2 应该能跑通");
+
+    let diff = compare(&v1, &v2, true);
+    assert_eq!(diff.deltas.len(), 4);
+
+    // 四种变化各一条，这正是这两份样例计划设计出来演示的
+    assert_eq!(diff.count(DeltaKind::Regressed), 1);
+    assert_eq!(diff.count(DeltaKind::SlowerButStillSameVerdict), 1);
+    assert_eq!(diff.count(DeltaKind::Fixed), 1);
+    assert_eq!(diff.count(DeltaKind::Unchanged), 1);
+
+    // 判定变坏的必须排在最前面：读的人从上往下看就是「先处理最要紧的」
+    assert_eq!(diff.deltas[0].kind(), DeltaKind::Regressed);
+    assert!(diff.deltas[0].title.contains("TCP 下行"));
+
+    assert!(diff.has_regression(), "有回归就该拦，退出码要是 1");
+}
+
+#[test]
+fn 和自己比没有任何变化() {
+    let rows = run_plan(Path::new("fixtures/plan.json")).unwrap();
+    let diff = compare(&rows, &rows, true);
+
+    assert_eq!(diff.count(DeltaKind::Unchanged), rows.len());
+    assert!(!diff.has_regression(), "同一份结果自己跟自己比不该报回归");
+}
+
+#[test]
+fn 计划变了会报成新增和缺失() {
+    let a = run_plan(Path::new("fixtures/plan.json")).unwrap();
+    let b = run_plan(Path::new("fixtures/plan_v1.json")).unwrap();
+
+    let diff = compare(&a, &b, false);
+    // 两份计划的测试项完全不同，所以是「全部缺失 + 全部新增」
+    assert_eq!(diff.count(DeltaKind::Disappeared), a.len());
+    assert_eq!(diff.count(DeltaKind::Added), b.len());
+    // 但这不算回归——计划换了而已，设备表现无从比较
+    assert!(!diff.has_regression());
+}
+
+// ---- 丢包只进诊断（ADR-17）------------------------------------------------
+
+#[test]
+fn 高丢包不改判定但进得了报告() {
+    let rows = run_plan(Path::new("fixtures/plan_loss.json")).expect("应该能跑通");
+    assert_eq!(rows.len(), 3);
+
+    // 丢包 31.4%，但 RX 平均到了门限 → PASS
+    assert_eq!(rows[0].verdict, Verdict::Pass, "丢包不是判定输入（ADR-17）");
+    assert_eq!(rows[0].udp_loss, Some(31.4));
+    assert!(rows[0].diagnostics.iter().any(|d| d.contains("丢包率")));
+
+    // 零丢包，但 RX 没到门限 → RATE_FAIL。两条加起来才说得清这条规则。
+    assert_eq!(rows[1].verdict, Verdict::RateFail);
+    assert_eq!(rows[1].udp_loss, Some(0.0));
+
+    // 没采丢包 = None，不是 0.0
+    assert_eq!(rows[2].udp_loss, None);
+}
+
+#[test]
+fn 丢包字段能存能读回() {
+    let rows = run_plan(Path::new("fixtures/plan_loss.json")).unwrap();
+    let path = std::env::temp_dir().join("cpe-mini-it-loss.jsonl");
+
+    write_jsonl(&path, &rows).unwrap();
+    let (loaded, skipped) = read_jsonl(&path).unwrap();
+
+    assert!(skipped.is_empty());
+    assert_eq!(loaded[0].udp_loss, Some(31.4));
+    assert_eq!(loaded[2].udp_loss, None, "没采到要读回 None，不能变成 0.0");
+
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn 老报告没有丢包字段照样读得出来() {
+    // 模拟加字段之前存下来的一行：JSON 里根本没有 udp_loss
+    let path = std::env::temp_dir().join("cpe-mini-it-oldrow.jsonl");
+    let old = r#"{"time":"1","task_id":"a","parent_id":"a","task":"TCP","transport":"tcp","param":"tcp / ab / 900 Mbps","verdict":"PASS","execution_status":"COMPLETED","reason_code":"RX_TARGET_MET","reason_detail":"","diagnostics":[],"round":1,"rx_avg":950.0}"#;
+    std::fs::write(
+        &path,
+        format!(
+            "{old}
+"
+        ),
+    )
+    .unwrap();
+
+    let (rows, skipped) = read_jsonl(&path).expect("历史报告必须还能读");
+    assert!(skipped.is_empty(), "缺新字段不该被当成坏行跳过");
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].udp_loss, None);
+    assert_eq!(rows[0].verdict, Verdict::Pass);
+
+    let _ = std::fs::remove_file(&path);
+}
+
+// ---- CSV 导出 -------------------------------------------------------------
+
+#[test]
+fn 导出的CSV列数和表头对得上() {
+    let rows = run_plan(Path::new("fixtures/plan_loss.json")).unwrap();
+    let text = to_csv(&rows);
+    let mut lines = text.lines();
+
+    let header = lines.next().unwrap().trim_start_matches('\u{feff}');
+    assert_eq!(header.split(',').count(), CSV_COLUMNS.len());
+
+    let mut count = 0;
+    for line in lines {
+        // 这几份样例里没有需要转义的字段
+        assert_eq!(line.split(',').count(), CSV_COLUMNS.len(), "错位了：{line}");
+        count += 1;
+    }
+    assert_eq!(count, rows.len());
 }

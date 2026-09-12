@@ -5,6 +5,18 @@
 
 先自己做，卡住再看。每做完一步都跑 `cargo test`。
 
+## 这个目录里有什么
+
+| 文件 | 对应 |
+|---|---|
+| 本文件 | 第 01–11、15–17 课的动手任务要点 |
+| `13_ping.md` + `ping_answer.rs` | 扩展课 A 的**完整代码** |
+| `14_webui.md` + `webui_answer.rs` / `.html` | 扩展课 B 的**完整代码** |
+
+**第 12 课（毕业考）没有答案**，这是有意的。
+
+`.rs` 答案都验证过能编译、测试全绿 —— `./check.sh` 每次都会重新验一遍。
+
 ---
 
 ## 第 01 课：加 `version` 分支
@@ -195,3 +207,161 @@ let rows: Vec<Row> = if failed_only {
 
 - 扩展课 13 → `src/ping.rs`
 - 扩展课 14 → `src/master/webui/http.rs`
+
+---
+
+## 第 15 课：对比两份报告
+
+**1. 对调 `Regressed` 和 `Fixed`**
+
+红的是 `compare::tests::判定变坏排在最前面`。失败信息会说
+`left: Fixed, right: Regressed`。
+
+`DeltaKind` 的 `Ord` 是 derive 的，**按变体声明顺序比大小** ——
+所以那个 enum 的顺序不是"排版"，是报告的排序规则。改它要当成改规则来改。
+
+**2. 把门限加进对齐键**
+
+红的是 `门限变了仍然对得上`：加了门限之后，同一条测试在两轮里成了两个键，
+报告变成「缺失 1 + 新增 1」。
+
+两种做法各自适合：
+
+| 做法 | 适合 | 代价 |
+|---|---|---|
+| 键里**不含**门限（现在这样） | 门限会调的场景，能看到「门限变了所以判定变了」 | 改了门限的测试会被当成同一条比 |
+| 键里**含**门限（真实项目） | 参数固定的回归跑，参数变了就是另一个测试 | 调一次门限，整张表变成全新增 |
+
+选哪个都行，**但要在注释里写清楚为什么** —— 下一个读代码的人
+（多半是三个月后的你）需要知道这是选择，不是疏忽。
+
+**3. 加门限列**
+
+`UnitSnapshot.target_mbps` 已经有了，改 `side()` 和表头即可。
+注意两轮门限不同时要都显示得出来，否则这一列反而会误导。
+
+**4. `--only-regressed`**
+
+```rust
+let only = args.iter().any(|a| a == "--only-regressed");
+```
+
+在 `render` 里过滤 `deltas`。**注意底部的统计还要数全部**，
+否则「共 1 条」会让人以为只跑了一条。
+
+**5. `plan_hash`（有点难）**
+
+链路：`plan.rs` 算哈希 → `Unit` 带上 → `UnitOutcome` 带上 → `Row` 带上 →
+`compare` 比较两边的值。
+
+FNV-1a 二十行不到：
+
+```rust
+pub fn plan_hash(plan: &Plan) -> String {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    let mut eat = |s: &str| {
+        for b in s.bytes() {
+            h ^= b as u64;
+            h = h.wrapping_mul(0x1000_0000_01b3);
+        }
+    };
+    eat(&plan.plan_id);
+    for spec in &plan.specs {
+        eat(&spec.title);
+        eat(&spec.transport);
+        eat(&spec.direction);
+        eat(&format!("{}", spec.target_mbps));
+    }
+    format!("{h:016x}")
+}
+```
+
+**别把样本算进去**：样本是测量结果，不是计划身份。算进去的话同一份计划
+跑两次就成了两份计划。
+
+`Row` 上加字段记得靠 `#[serde(default)]` 兼容老报告（第 08 课那条）。
+
+---
+
+## 第 16 课：诊断通道
+
+**1. 让丢包改判定**
+
+红的是 `executor::tests::丢包再高也不改判定`。**它的名字就是答案**：
+这条规则被写成了测试，不是写在文档里 —— 文档会过时，测试不会。
+
+**2. 把 `Option<f64>` 改成 `f64`**
+
+红的是 `没采到丢包和丢包为零是两回事`。改完之后，没采丢包的那条会变成
+`0.0` —— 一份「完美零丢包」的报告，而且**没有任何报错**。
+
+这类静默的错误最贵。
+
+**3. 加 `tcp_retransmits`**
+
+和丢包完全对称：`Spec` → `Leg` → `LegOutcome` → `Row`，
+executor 里加一个阈值判断塞进 `diagnostics`。
+
+必写的测试：
+
+```rust
+#[test]
+fn 重传再多也不改判定() {
+    // 重传 5000 次，但 RX 达标 → 仍然 PASS
+}
+```
+
+**没有这个测试，这条规则就只存在于你的记忆里。**
+
+**4. `MAX_UDP_LOSS_PCT` 改成 0.0**
+
+每一行都会冒出一条诊断（只要采到了丢包），包括 0.1% 这种完全正常的。
+诊断栏变成噪声，真正要紧的那条反而看不见了 ——
+这就是真实项目把它做成配置项的理由：不同用例对「正常」的定义不一样。
+
+---
+
+## 第 17 课：CSV 导出
+
+**1. 加 `coverage` 列**
+
+`Row` 上还没有这个字段，先加（`coverage: Option<f64>`，从
+`LegOutcome.window.coverage` 来），再加到 `CSV_COLUMNS` **末尾**和 `fields` 末尾。
+
+只改一处的话，`debug_assert_eq!(fields.len(), CSV_COLUMNS.len())` 会当场炸 ——
+故意试一次，看那条断言长什么样。
+
+**2. `--only-failed`**
+
+```rust
+let rows: Vec<Row> = if only_failed {
+    rows.into_iter()
+        .filter(|r| matches!(r.verdict, Verdict::RateFail | Verdict::SetupError | Verdict::NotEvaluated))
+        .collect()
+} else {
+    rows
+};
+```
+
+注意筛选条件要和退出码那条一致（`main.rs` 里 `bad = rate_fail + setup_error + not_evaluated`）。
+**两处口径不一样的话，「导出失败项」和「退出码说有失败」会对不上。**
+更好的做法：把这个判断抽成一个函数，两处都调它 —— 第 16 课那条规矩。
+
+**3. 逗号测试**
+
+```rust
+#[test]
+fn 明细里有逗号也不错位() {
+    let mut rows = 样例行();
+    rows[0].reason_detail = "RX 平均 950 Mbps, 目标 900".to_string();
+    let text = to_csv(&rows);
+    let line = text.lines().nth(1).unwrap();
+    assert!(line.contains("\"RX 平均 950 Mbps, 目标 900\""));
+}
+```
+
+**4. 去掉 BOM**
+
+在 macOS 的 Numbers 上看不出区别（它按 UTF-8 猜对了）。
+中文 Windows 的 Excel 上整列中文会变成乱码 ——
+这就是为什么这个坑只有在真实用户那里才会暴露。

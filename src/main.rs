@@ -9,7 +9,7 @@
 //! `main` 自己不干活：它把退出码交给 `real_main`，这样每个分支都能明确
 //! 返回 0 还是 1，而不是到处 `std::process::exit`。
 
-use cpe_mini::{default_output, demo_plan_path, preview_plan, report, run_plan};
+use cpe_mini::{compare, default_output, demo_plan_path, preview_plan, report, run_plan};
 use std::path::PathBuf;
 
 fn main() {
@@ -61,6 +61,66 @@ fn real_main(args: Vec<String>) -> i32 {
                     0
                 }
                 Err(e) => fail(&e),
+            }
+        }
+
+        "csv" => {
+            let Some(path) = args.get(1) else {
+                return fail("csv 后面要跟报告文件，例如：csv output/rows.jsonl");
+            };
+            let out = args
+                .get(2)
+                .map(PathBuf::from)
+                .unwrap_or_else(|| PathBuf::from("output/rows.csv"));
+
+            match report::read_jsonl(&PathBuf::from(path)) {
+                Ok((rows, skipped)) => {
+                    for s in &skipped {
+                        eprintln!("警告：{s}");
+                    }
+                    match report::write_csv(&out, &rows) {
+                        Ok(()) => {
+                            println!("已导出 {} 行到 {}", rows.len(), out.display());
+                            0
+                        }
+                        Err(e) => fail(&e),
+                    }
+                }
+                Err(e) => fail(&e),
+            }
+        }
+
+        "compare" => {
+            let (Some(before_path), Some(after_path)) = (args.get(1), args.get(2)) else {
+                return fail("compare 后面要跟两份报告，例如：compare output/before.jsonl output/after.jsonl");
+            };
+
+            // 真实项目靠 Row 上的 plan_hash 自动判断两轮是不是同一份计划。
+            // cpe-mini 的 Row 没有那个字段，所以这里由用户显式说明。
+            //
+            // 刻意**不**从 task_id 里反解 plan_id：那是从展示串里搜字段，
+            // 和 builder.rs 里「轮次要是类型化字段，不能从标题后缀里搜」
+            // 是同一个错误。缺字段就把它加上，不要拿字符串凑。
+            // 第 15 课的动手任务就是把 plan_hash 这个字段补上。
+            let same_plan = !args.iter().any(|a| a == "--plan-changed");
+
+            let before = match report::read_jsonl(&PathBuf::from(before_path)) {
+                Ok((rows, _)) => rows,
+                Err(e) => return fail(&e),
+            };
+            let after = match report::read_jsonl(&PathBuf::from(after_path)) {
+                Ok((rows, _)) => rows,
+                Err(e) => return fail(&e),
+            };
+
+            let diff = compare::compare(&before, &after, same_plan);
+            println!("{}", compare::render(&diff));
+
+            // 退出码给 CI 用：有回归就别放行。
+            if diff.has_regression() {
+                1
+            } else {
+                0
             }
         }
 
@@ -120,11 +180,16 @@ fn help() -> String {
         "  cargo run -- plan <计划文件>            只展开，看会跑成什么样",
         "  cargo run -- run <计划文件> [输出文件]   跑一份计划并存报告",
         "  cargo run -- report <报告文件>          读回报告重新渲染",
+        "  cargo run -- compare <旧> <新>          对比两份报告，有回归返回 1",
+        "  cargo run -- csv <报告文件> [输出]       导出 CSV（给 Excel 用）",
         "",
         "样例：",
         "  cargo run -- plan fixtures/plan.json",
         "  cargo run -- run fixtures/plan.json output/rows.jsonl",
         "  cargo run -- report output/rows.jsonl",
+        "  cargo run -- compare output/before.jsonl output/after.jsonl",
+        "",
+        "两轮跑的不是同一份计划时，加 --plan-changed。",
     ]
     .join("\n")
 }

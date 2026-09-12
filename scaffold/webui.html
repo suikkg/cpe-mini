@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>cpe-mini</title>
+<style>
+  body { font: 14px/1.6 -apple-system, "PingFang SC", sans-serif;
+         max-width: 900px; margin: 40px auto; padding: 0 16px; color: #222; }
+  h1 { font-size: 18px; }
+  select, button { font: inherit; padding: 4px 10px; }
+  button { cursor: pointer; }
+  table { border-collapse: collapse; width: 100%; margin-top: 16px; }
+  th, td { border-bottom: 1px solid #ddd; padding: 6px 8px; text-align: left; }
+  th { background: #f6f6f6; }
+  pre { background: #f6f6f6; padding: 12px; overflow-x: auto; }
+  .err { background: #fdeaea; border-left: 3px solid #d33; padding: 12px; white-space: pre-wrap; }
+  .PASS { color: #157f3d; }
+  .RATE_FAIL { color: #c62828; font-weight: 600; }
+  .NOT_EVALUATED, .SETUP_ERROR { color: #b26a00; }
+</style>
+</head>
+<body>
+
+<h1>cpe-mini</h1>
+
+<p>
+  计划
+  <select id="plan">
+    <option value="plan.json">plan.json（三种典型结果）</option>
+    <option value="plan_bidir.json">plan_bidir.json（双向多轮）</option>
+    <option value="plan_edge.json">plan_edge.json（五种边界）</option>
+    <option value="plan_loss.json">plan_loss.json（丢包只进诊断）</option>
+    <option value="plan_bad.json">plan_bad.json（配置非法，看错误路径）</option>
+    <option value="plan_broken.json">plan_broken.json（JSON 语法坏）</option>
+  </select>
+  <button id="preview">展开看看</button>
+  <button id="run">运行</button>
+</p>
+
+<div id="out"></div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+
+// 每个接口的返回形状都一样：{ok:true,data:...} 或 {ok:false,error:"..."}
+// 所以这个判断只写一次。
+async function call(api) {
+  const plan = $("plan").value;
+  const res = await fetch(`${api}?plan=${encodeURIComponent(plan)}`);
+  return res.json();
+}
+
+function showError(msg) {
+  // 错误路径是这一课的第 4 步，也是最重要的一步：
+  // 大多数人写到「能显示结果」就停了，但用户真正会遇到的是这一屏。
+  $("out").innerHTML = `<div class="err">${escapeHtml(msg)}</div>`;
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, (c) =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
+$("preview").onclick = async () => {
+  $("out").textContent = "展开中…";
+  const r = await call("/api/plan");
+  if (!r.ok) return showError(r.error);
+  $("out").innerHTML = `<pre>${escapeHtml(r.data.text)}</pre>`;
+};
+
+$("run").onclick = async () => {
+  $("out").textContent = "运行中…";
+  const r = await call("/api/run");
+  if (!r.ok) return showError(r.error);
+
+  const rows = r.data.rows;
+  const head = "<tr><th>测试项</th><th>实测</th><th>结果</th><th>原因</th><th>诊断</th></tr>";
+  const body = rows.map((row) => `
+    <tr>
+      <td>${escapeHtml(row.task)}</td>
+      <td>${row.rx_avg === null ? "无有效数据" : row.rx_avg.toFixed(0) + " Mbps"}</td>
+      <td class="${row.verdict}">${row.verdict}</td>
+      <td>${escapeHtml(row.reason_detail)}</td>
+      <td>${escapeHtml((row.diagnostics || []).join("；"))}</td>
+    </tr>`).join("");
+  $("out").innerHTML = `<table>${head}${body}</table>`;
+};
+</script>
+</body>
+</html>

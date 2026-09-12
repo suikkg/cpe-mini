@@ -27,6 +27,10 @@ pub struct Leg {
     pub target_mbps: f64,
     /// 接收端网卡逐秒 RX 速率。
     pub samples: Vec<f64>,
+    /// 这条腿的丢包率（百分比）。`None` = 没采到，**不是** 0%。
+    ///
+    /// 只用于诊断，判定一个字节都不看它（ADR-17）。
+    pub udp_loss: Option<f64>,
 }
 
 /// 一个测试单元：执行和判定的基本粒度。
@@ -98,11 +102,13 @@ fn build_legs(spec: &Spec) -> Vec<Leg> {
             tag: String::new(),
             target_mbps: spec.target_mbps,
             samples: spec.samples_ab.clone(),
+            udp_loss: spec.udp_loss_ab,
         }],
         "ba" => vec![Leg {
             tag: String::new(),
             target_mbps: spec.target_mbps,
             samples: spec.samples_ba.clone(),
+            udp_loss: spec.udp_loss_ba,
         }],
         // 双向：两条腿，各自按同一个门限判
         "bidir" => vec![
@@ -110,11 +116,13 @@ fn build_legs(spec: &Spec) -> Vec<Leg> {
                 tag: "AB".to_string(),
                 target_mbps: spec.target_mbps,
                 samples: spec.samples_ab.clone(),
+                udp_loss: spec.udp_loss_ab,
             },
             Leg {
                 tag: "BA".to_string(),
                 target_mbps: spec.target_mbps,
                 samples: spec.samples_ba.clone(),
+                udp_loss: spec.udp_loss_ba,
             },
         ],
         // 校验已经拦过非法方向，走到这里说明校验漏了——给空腿，
@@ -146,6 +154,8 @@ mod tests {
                     target_mbps: 900.0,
                     samples_ab: vec![900.0; 6],
                     samples_ba: vec![800.0; 6],
+                    udp_loss_ab: None,
+                    udp_loss_ba: None,
                 },
                 Spec {
                     title: "UDP".into(),
@@ -154,6 +164,8 @@ mod tests {
                     target_mbps: 500.0,
                     samples_ab: vec![500.0; 6],
                     samples_ba: vec![500.0; 6],
+                    udp_loss_ab: None,
+                    udp_loss_ba: None,
                 },
             ],
         }

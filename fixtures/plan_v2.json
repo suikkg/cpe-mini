@@ -1,0 +1,39 @@
+{
+  "plan_id": "fw-B12",
+  "rounds": 1,
+  "warmup_secs": 2,
+  "specs": [
+    {
+      "title": "TCP 下行",
+      "transport": "tcp",
+      "direction": "ab",
+      "target_mbps": 900.0,
+      "samples_ab": [110.0, 450.0, 879.0, 884.0, 872.0, 881.0, 878.0, 883.0],
+      "samples_ba": []
+    },
+    {
+      "title": "TCP 上行",
+      "transport": "tcp",
+      "direction": "ab",
+      "target_mbps": 500.0,
+      "samples_ab": [100.0, 430.0, 868.0, 872.0, 866.0, 875.0, 870.0, 869.0],
+      "samples_ba": []
+    },
+    {
+      "title": "UDP 下行",
+      "transport": "udp",
+      "direction": "ab",
+      "target_mbps": 900.0,
+      "samples_ab": [105.0, 440.0, 931.0, 928.0, 936.0, 927.0, 933.0, 930.0],
+      "samples_ba": []
+    },
+    {
+      "title": "TCP 近距离",
+      "transport": "tcp",
+      "direction": "ab",
+      "target_mbps": 900.0,
+      "samples_ab": [130.0, 495.0, 946.0, 944.0, 949.0, 943.0, 947.0, 945.0],
+      "samples_ba": []
+    }
+  ]
+}

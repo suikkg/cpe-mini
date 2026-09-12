@@ -80,6 +80,20 @@ const PAGE: &str = include_str!("webui.html");
 
 ## 5. 任务
 
+**骨架已经给好了**，6 个测试全写好了（而且一个服务都不用起），你只补函数体：
+
+```bash
+cp scaffold/webui.rs  src/webui.rs
+cp scaffold/webui.html src/webui.html
+# src/lib.rs 里加 pub mod webui;
+# Cargo.toml 里加 tiny_http = "0.12"
+cargo test --lib webui       # 现在全红
+```
+
+`webui.html` 是给好的，不用你写 —— 这一课练的是 Rust 那一层。
+
+答案：`solutions/webui_answer.rs` + `solutions/14_webui.md`。
+
 分四步，每步都要能跑：
 
 1. **只有一个页面**：`cargo run -- ui` 起服务，`/` 返回一句 hello。确认能打开。
