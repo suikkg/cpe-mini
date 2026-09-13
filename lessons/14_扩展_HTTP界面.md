@@ -62,7 +62,28 @@ pub fn run(port: u16) -> Result<(), String> {
 > 用 `recv_timeout` 而不是 `recv()`：后者没有出口，取消标志永远查不到。
 
 `incoming_requests()` 会一直阻塞，Ctrl-C 之外没有别的办法停下来。
-要支持优雅退出，就得用带超时的循环。
+要支持优雅退出，就得用带超时的循环：
+
+```rust
+loop {
+    match server.recv_timeout(Duration::from_millis(200)) {
+        Ok(Some(req)) => handle(req),
+        Ok(None) => {}                      // 200ms 内没请求，正好回来查一下标志
+        Err(e) => return Err(format!("{e}")),
+    }
+    if cancel.is_cancelled() {              // ← 这一句就是超时的全部意义
+        break;
+    }
+}
+```
+
+**那个 `Ok(None)` 分支看起来什么都没干，它才是关键** ——
+没有它，循环就永远回不到 `is_cancelled()` 那一行。
+
+`cancel` 是哪来的？**第 18 课那个 `CancelFlag`**。
+Web 界面上的「停止」按钮要停掉一轮正在跑的测试，走的就是同一个标志 ——
+按钮在 HTTP 线程里置位，执行循环在另一个线程里读到。
+`Arc<AtomicBool>` 的用处在这里最直观。
 
 **页面放哪**
 
@@ -78,7 +99,47 @@ const PAGE: &str = include_str!("webui.html");
 浏览器不看 `Content-Type` 会把 JSON 当文本显示。真实项目有专门的
 `json_response()` 帮助函数，每个 API 出口都走它 —— 不要每处手写 header。
 
-## 5. 任务
+顺带把**响应信封**也统一掉：
+
+```json
+{ "ok": true,  "data": [ ... ] }
+{ "ok": false, "error": "specs[0].transport 只能是 tcp 或 udp，当前是 \"sctp\"" }
+```
+
+前端只要写一处 `if (!res.ok) 显示 res.error`，所有接口都适用。
+每个接口各出各的形状，前端就得为每个接口写一遍错误处理 ——
+**而漏写的那个接口，出错时页面就是一片空白。**
+
+## 5. 一个必须做的检查：别让用户点到别的文件
+
+`/api/run?plan=fixtures/plan.json` 这种接口，参数是**用户给的路径**。
+
+那他也可以给：
+
+```text
+/api/run?plan=../../../etc/passwd
+/api/run?plan=../Cargo.toml
+```
+
+你的程序会老老实实去读，然后把读到的东西（或者报错里带的内容）发回去。
+
+最简单的挡法：**只认白名单目录下的文件名**。
+
+```rust
+// 只允许 fixtures/ 下面的 .json，且不许出现 .. 和 /
+if name.contains("..") || name.contains('/') || !name.ends_with(".json") {
+    return bad_request("计划文件名不合法");
+}
+let path = Path::new("fixtures").join(name);
+```
+
+> **凡是从外面进来的字符串被用来拼路径、拼命令、拼 SQL，都要先过一道检查。**
+> 这一课的界面只监听 `127.0.0.1`，风险有限；但真实项目的 webui
+> 是给现场同事在局域网里用的，这道检查就不是可选项了。
+
+骨架里的测试有一条专门验这个，答案里也实现了。
+
+## 6. 任务
 
 **骨架已经给好了**，6 个测试全写好了（而且一个服务都不用起），你只补函数体：
 
@@ -106,7 +167,7 @@ cargo test --lib webui       # 现在全红
 
 **第 4 步最重要。** 大多数人写到第 3 步就停了，但错误路径才是用户真正会遇到的。
 
-## 6. 验收
+## 7. 验收
 
 ```bash
 cargo run -- ui
@@ -116,11 +177,12 @@ cargo run -- ui
 - [ ] 计划校验失败时页面显示得出具体错误（哪条 spec、哪个字段）
 - [ ] 服务跑着的时候 `cargo test` 仍然全绿（业务逻辑没被 HTTP 层污染）
 - [ ] `src/webui.rs` 里**没有任何判定逻辑** —— 它只负责收请求、调业务、转 JSON
+- [ ] `?plan=../Cargo.toml` 被挡下来了，而不是真的去读那个文件
 
 最后一条是这一课真正要学的。翻一遍你写的 `webui.rs`，
 如果里面出现了 `if rx_avg >= target` 这种东西，就是分层破了。
 
-## 7. 做完之后读真实代码
+## 8. 做完之后读真实代码
 
 `src/master/webui/`：
 

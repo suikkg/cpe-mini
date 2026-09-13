@@ -66,7 +66,56 @@ let window: &[f64] = if warmup_secs >= samples.len() { &[] } else { &samples[war
 `tests::爬坡比样本还长也是窗口太短` 钉住了这条。
 **凡是用下标或切片的地方，先问一句"越界会怎样"。**
 
-## 6. 动手任务
+## 6. 这几行里藏着你学过的三件事
+
+打开 `src/rate_window.rs` 看这三行，它们是 rust-starter 那边几个坑的真实用法：
+
+```rust
+let non_zero = window.iter().filter(|v| **v > 0.0).count();
+let coverage = non_zero as f64 / window.len() as f64;
+let sum: f64 = window.iter().sum();
+```
+
+**一、`as f64` 出现了两次，而且在除号两边**
+
+`non_zero` 和 `window.len()` 都是 `usize`。不转的话：
+
+```rust
+let coverage = non_zero / window.len();     // 整数除法！
+```
+
+`3 / 5` 等于 **0**，`5 / 5` 等于 1 —— 覆盖率只有 0 和 1 两个值，
+`coverage < MIN_COVERAGE` 这道关就变成了「只要有一个零样本就不通过」。
+
+**而且编译器一个字都不会说**，因为它是合法代码。
+（rust-starter 第 02 课那个坑，这就是它在真实代码里的样子。）
+
+**二、`**v` 那两个星号**
+
+`window.iter()` 给的是 `&f64`，`filter` 又借了一层，所以闭包里拿到 `&&f64`。
+要和 `0.0` 比大小得先解两层引用。
+
+写 `|v| v > 0.0` 编译不过，而且报错直接把答案写出来了：
+
+```
+error[E0308]: mismatched types
+  |     .filter(|v| v > 0.0)
+  |                     ^^^ expected `&&f64`, found floating-point number
+```
+
+`expected &&f64` —— 它明说了你手里是两层引用。
+（rust-starter 第 13 课提过这个 `&&T`。）
+
+**三、`let sum: f64 =` 那个类型标注不能省**
+
+`sum()` 不知道你要加成什么类型。不标注就是
+`error[E0282]: type annotations needed`。
+另一种写法是 `window.iter().sum::<f64>()`。
+
+> **读真实代码时，这类「为什么多写了两个字」的地方值得停一下。**
+> 十次有九次，那两个字是被某个 bug 逼出来的。
+
+## 7. 动手任务
 
 1. 加一道关：如果窗口里最大值比最小值大 10 倍以上，判 `RX_UNSTABLE`
    （真实项目有这个码，字符串 `"RX_UNSTABLE"`）
@@ -76,7 +125,7 @@ let window: &[f64] = if warmup_secs >= samples.len() { &[] } else { &samples[war
 
 注意：这道关该放在覆盖率检查之前还是之后？想清楚再写 —— 顺序会影响原因码。
 
-## 7. 验收
+## 8. 验收
 
 ```bash
 cargo test --lib rate_window
@@ -87,8 +136,9 @@ cargo run -- run fixtures/plan_edge.json
 - [ ] 能解释为什么必须切爬坡
 - [ ] 能说出三（现在四）道关各自对应哪个原因码
 - [ ] 检查过自己写的代码有没有切片越界的可能
+- [ ] 说得出 `coverage` 那一行少了 `as f64` 会发生什么（而且不会报错）
 
-## 8. 对应真实项目
+## 9. 对应真实项目
 
 `src/master/rate_window.rs`（2035 行）。真实实现还要处理：
 网卡累计计数器回绕、多网卡合并、滚动窗口、时钟漂移、
