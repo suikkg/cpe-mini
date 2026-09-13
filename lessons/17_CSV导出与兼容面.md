@@ -128,7 +128,51 @@ row.diagnostics.join("; ")
 **有损是有意的。** CSV 是给人打开看的出口，不是数据交换格式；
 要完整数据就读 rows.jsonl。搞混这两者的出口，就会想给 CSV 加嵌套结构。
 
-## 8. 动手任务
+## 8. 列顺序有两道保险，各抓各的
+
+```rust
+debug_assert_eq!(fields.len(), CSV_COLUMNS.len());
+```
+
+这一条抓的是「**表头和数据对不上**」—— 加了列名却忘了填值，或者反过来。
+它在 debug 构建里当场 panic，是写代码时的第一道拦网。
+
+但它抓不住另一件事：**列的顺序被人调换了**。
+表头和数据仍然一一对应，断言照样通过，而下游按列号取值的 Excel 模板全错位。
+
+第二道保险是**黄金文件**：
+
+```bash
+cargo test --test golden
+```
+
+`fixtures/golden/plan.csv` 存着整份 CSV 现在的样子，包括表头那一行的确切顺序。
+调换两列，它当场红。
+
+| 保险 | 抓什么 | 什么时候响 |
+|---|---|---|
+| `debug_assert_eq!` | 表头和数据数量对不上 | 跑到那一行时 |
+| 黄金文件 | 顺序变了、措辞变了、转义变了 | `cargo test` 时 |
+
+**两道都要。** 第一道快、位置准；第二道慢一点，但它看的是**整体**，
+而兼容面坏掉从来都是整体层面的事。细节在第 20 课。
+
+**30 秒验一下**：把 `CSV_COLUMNS` 里 `"rx_avg"` 和 `"udp_loss"` 两行对调，
+然后 `cargo test`。
+
+`debug_assert_eq!` 一声不吭（列数没变），黄金文件当场把差别摆出来：
+
+```text
+输出和 fixtures/golden/plan.csv 对不上。
+
+第 1 行：
+  黄金文件：...,round,rx_avg,udp_loss
+  这次跑出来：...,round,udp_loss,rx_avg
+```
+
+改回来。
+
+## 9. 动手任务
 
 1. 给 CSV 加一列 `coverage`（采样覆盖率）。注意加在**末尾**，
    并且两处都要改（`CSV_COLUMNS` 和 `fields`）—— 只改一处会被
@@ -140,7 +184,7 @@ row.diagnostics.join("; ")
 4. 把 BOM 去掉，用 Excel 或 Numbers 打开看看（如果手边有中文 Windows，
    效果最明显）。
 
-## 9. 验收
+## 10. 验收
 
 ```bash
 cargo test
@@ -151,8 +195,9 @@ cargo run -- csv output/loss.jsonl output/loss.csv
 - [ ] 能说出 CSV 列顺序被改会怎样，以及为什么不会有报错
 - [ ] 能说出 BOM 是干嘛的
 - [ ] 能解释 `diagnostics` 为什么用 `;` 连接而不是 `,`
+- [ ] 说得出 `debug_assert_eq!` 和黄金文件各自抓得住什么
 
-## 10. 对应真实项目
+## 11. 对应真实项目
 
 真实项目导的是 **xlsx**（`src/report/xlsx.rs`），不是 CSV ——
 xlsx 没有转义和 BOM 的问题，但多了一个依赖和一堆格式代码。
