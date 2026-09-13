@@ -1,12 +1,13 @@
-# scaffold/ —— 扩展课 13 / 14 的骨架
+# scaffold/ —— 要自己补函数体的课
 
-这两课不像前面的课「读现成代码再改」，而是**自己写一个新模块**。
+这几课不像前面的课「读现成代码再改」，而是**自己写**。
 骨架给了结构和测试，你补函数体。
 
-| 文件 | 对应课 | 装到哪 |
-|---|---|---|
-| `ping.rs` | 13（真实执行） | `src/ping.rs` |
-| `webui.rs` + `webui.html` | 14（HTTP 界面） | `src/webui.rs` + `src/webui.html` |
+| 文件 | 对应课 | 装到哪 | 几道题 |
+|---|---|---|---|
+| `ping.rs` | 13（真实执行） | `src/ping.rs` | 7 个测试 |
+| `webui.rs` + `webui.html` | 14（HTTP 界面） | `src/webui.rs` + `src/webui.html` | 6 个测试 |
+| `aggregate_special.rs` | 19（聚合的两条特例） | `src/aggregate_special.rs` | 3 道题 / 10 个测试 |
 
 ## 为什么不直接放在 src/
 
@@ -59,6 +60,23 @@ cargo run -- ui           # 做完之后，打开 http://127.0.0.1:8080
 
 `webui.html` 是**给好的**，不用你写 —— 这一课练的是 Rust 那一层。
 
+## 第 19 课
+
+```bash
+cp scaffold/aggregate_special.rs src/aggregate_special.rs
+```
+
+`src/lib.rs` 加 `pub mod aggregate_special;`（按字母序，放在 `builder` 前面）。
+
+```bash
+cargo test --lib aggregate_special    # 10 个测试，现在全红
+```
+
+这一课不加依赖，也不起进程 —— 三个纯函数。难的是**读懂规则为什么长这样**。
+
+做完之后还有一步：把它搬进 `src/verdict.rs` 替掉现有的 `aggregate_verdict`，
+拿全部 103 个测试当安全网。课程文档里有步骤。
+
 ## 骨架里的两个 allow
 
 ```rust
@@ -72,5 +90,6 @@ cargo run -- ui           # 做完之后，打开 http://127.0.0.1:8080
 
 - `solutions/ping_answer.rs`、`solutions/13_ping.md`
 - `solutions/webui_answer.rs`、`solutions/webui_answer.html`、`solutions/14_webui.md`
+- `solutions/aggregate_special_answer.rs`
 
 答案都是**验证过能编译、测试全绿**的。但先自己写 15 分钟。

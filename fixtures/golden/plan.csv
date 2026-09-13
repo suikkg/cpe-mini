@@ -1,0 +1,4 @@
+﻿time,task_id,parent_id,task,transport,param,verdict,execution_status,reason_code,reason_detail,diagnostics,round,rx_avg,udp_loss
+<TIME>,demo-0-r1,demo-0-r1,TCP-A,tcp,tcp / ab / 900 Mbps,PASS,COMPLETED,RX_TARGET_MET,RX 平均 950 Mbps >= 目标 900 Mbps,有效窗口 6 秒，采样覆盖率 100%,1,950.3,
+<TIME>,demo-1-r1,demo-1-r1,TCP-B,tcp,tcp / ab / 900 Mbps,RATE_FAIL,COMPLETED,RX_BELOW_TARGET,RX 平均 850 Mbps < 目标 900 Mbps,有效窗口 6 秒，采样覆盖率 100%,1,850.0,
+<TIME>,demo-2-r1,demo-2-r1,TCP-C,tcp,tcp / ab / 900 Mbps,NOT_EVALUATED,ERROR,NO_STREAM_STARTED,测试工具没跑起来，检查对端是否在线、端口是否被占,,1,,

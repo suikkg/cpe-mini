@@ -12,6 +12,9 @@
 //!   → report             落 rows.jsonl + 渲染摘要
 //! ```
 //!
+//! 执行那一步随时可以被 [`cancel::CancelFlag`] 叫停（第 18 课）——
+//! 停下之后剩下的单元照样出行，只是判定 `SKIP`。
+//!
 //! 报告存下来之后还有两个出口，都只读 `rows.jsonl`、不碰前面的链路：
 //!
 //! ```text
@@ -24,6 +27,7 @@
 //! `src/report/`。
 
 pub mod builder;
+pub mod cancel;
 pub mod compare;
 pub mod executor;
 pub mod plan;
@@ -46,9 +50,20 @@ pub fn default_output() -> PathBuf {
 
 /// 读计划 → 展开 → 执行 → 出行。一条龙。
 pub fn run_plan(path: &Path) -> Result<Vec<report::Row>, String> {
+    run_plan_cancellable(path, &cancel::CancelFlag::new())
+}
+
+/// 同上，但中途可以被叫停。见第 18 课。
+///
+/// 被取消之后剩下的单元**照样出行**，判定 `SKIP`、执行状态 `CANCELLED`。
+/// 报告的行数只由计划决定，跟跑没跑完无关。
+pub fn run_plan_cancellable(
+    path: &Path,
+    flag: &cancel::CancelFlag,
+) -> Result<Vec<report::Row>, String> {
     let plan = plan::load(path)?;
     let units = builder::build_units(&plan);
-    let outcomes = executor::execute_plan(&units);
+    let outcomes = executor::execute_plan_cancellable(&units, flag);
     Ok(report::rows_from(&outcomes))
 }
 

@@ -32,6 +32,18 @@ pub enum ReasonCode {
     SampleCoverageLow,
     /// 计划里没给门限，或者门限非法。
     TargetMissing,
+    /// 单流 UDP 耗尽全部重试仍然一个样本都没有。
+    ///
+    /// 这是**用户指定的硬失败**：那个方向「必须灌通」，所以哪怕它本质上是
+    /// 「工具没测出来」，判定也算 `RATE_FAIL`，而且不许被另一条腿普通的
+    /// 「无法评价」盖住。见第 19 课。
+    SingleUdpStreamFailed,
+    /// 计划里配的负载就没到门限——拿它判不达标没有意义。
+    ///
+    /// 这是**这条腿自己**的配置问题，不说明另一条腿的数不可信。第 19 课。
+    ConfiguredLoadTooLow,
+    /// 实际打出去的负载低于门限，同上，是这条腿自己的问题。第 19 课。
+    OfferedLoadLow,
 }
 
 impl ReasonCode {
@@ -45,6 +57,9 @@ impl ReasonCode {
             ReasonCode::EffectiveWindowShort => "EFFECTIVE_WINDOW_SHORT",
             ReasonCode::SampleCoverageLow => "SAMPLE_COVERAGE_LOW",
             ReasonCode::TargetMissing => "TARGET_MISSING",
+            ReasonCode::SingleUdpStreamFailed => "SINGLE_UDP_STREAM_FAILED",
+            ReasonCode::ConfiguredLoadTooLow => "CONFIGURED_LOAD_TOO_LOW",
+            ReasonCode::OfferedLoadLow => "OFFERED_LOAD_LOW",
         }
     }
 
@@ -66,6 +81,13 @@ impl ReasonCode {
                 Some("采样有大量空洞，检查网卡计数器是否被其他程序干扰")
             }
             ReasonCode::TargetMissing => Some("计划里没有给出有效门限，先改配置"),
+            ReasonCode::SingleUdpStreamFailed => {
+                Some("必须灌通的单流 UDP 方向一个样本都没测到，先查对端和端口")
+            }
+            ReasonCode::ConfiguredLoadTooLow => {
+                Some("计划里配的负载本来就没到门限，改大 bandwidth 再跑")
+            }
+            ReasonCode::OfferedLoadLow => Some("实际打出去的负载没到门限，查发送端是否被限速"),
             ReasonCode::None | ReasonCode::RxTargetMet => None,
         }
     }
@@ -89,6 +111,9 @@ impl FromStr for ReasonCode {
             "EFFECTIVE_WINDOW_SHORT" => ReasonCode::EffectiveWindowShort,
             "SAMPLE_COVERAGE_LOW" => ReasonCode::SampleCoverageLow,
             "TARGET_MISSING" => ReasonCode::TargetMissing,
+            "SINGLE_UDP_STREAM_FAILED" => ReasonCode::SingleUdpStreamFailed,
+            "CONFIGURED_LOAD_TOO_LOW" => ReasonCode::ConfiguredLoadTooLow,
+            "OFFERED_LOAD_LOW" => ReasonCode::OfferedLoadLow,
             _ => return Err(()),
         })
     }
@@ -139,6 +164,9 @@ mod tests {
             ReasonCode::EffectiveWindowShort,
             ReasonCode::SampleCoverageLow,
             ReasonCode::TargetMissing,
+            ReasonCode::SingleUdpStreamFailed,
+            ReasonCode::ConfiguredLoadTooLow,
+            ReasonCode::OfferedLoadLow,
         ];
         for code in all {
             assert_eq!(

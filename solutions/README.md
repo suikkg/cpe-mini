@@ -9,9 +9,10 @@
 
 | 文件 | 对应 |
 |---|---|
-| 本文件 | 第 01–11、15–17 课的动手任务要点 |
+| 本文件 | 第 01–11、15–18、20 课的动手任务要点 |
 | `13_ping.md` + `ping_answer.rs` | 扩展课 A 的**完整代码** |
 | `14_webui.md` + `webui_answer.rs` / `.html` | 扩展课 B 的**完整代码** |
+| `aggregate_special_answer.rs` | 第 19 课的**完整代码** |
 
 **第 12 课（毕业考）没有答案**，这是有意的。
 
@@ -365,3 +366,132 @@ fn 明细里有逗号也不错位() {
 在 macOS 的 Numbers 上看不出区别（它按 UTF-8 猜对了）。
 中文 Windows 的 Excel 上整列中文会变成乱码 ——
 这就是为什么这个坑只有在真实用户那里才会暴露。
+
+---
+
+## 第 18 课：取消
+
+### 任务 A：把 `break` 写回去
+
+`cargo test` 会挂三个（名字直接说了破坏的是哪条规则）：
+
+```text
+executor::tests::被取消的单元一个都不许少
+executor::tests::取消之后的单元判SKIP
+executor::tests::取消记在执行状态上而不是判定上
+```
+
+**但实际上挂的是四个。** 单元测试那个二进制一失败，cargo 就不往下跑了，
+集成测试根本没开始。单独跑一次：
+
+```bash
+cargo test --test golden
+```
+
+```text
+failures:
+    取消之后剩下的单元还在报告里
+```
+
+那份黄金文件从六行掉到两行 —— 它钉的不是排版，是**行数**。
+
+顺带记住这件事：**`cargo test` 全红的时候，看到的失败清单往往是不全的。**
+修完第一批再跑一次，后面可能还有。
+
+### 任务 B：摘要里说一声
+
+`report::Tally` 加一个字段，`tally()` 里数一下：
+
+```rust
+pub struct Tally {
+    // ... 原有的
+    pub skip: usize,
+}
+```
+
+```rust
+Verdict::Skip => t.skip += 1,
+```
+
+`render` 的摘要行改成：
+
+```rust
+let mut line = format!("总计 {} 项：通过 {}，未达标 {}，无法评价 {}",
+                       t.total, t.pass, t.rate_fail, t.not_evaluated);
+if t.skip > 0 {
+    line.push_str(&format!("，跳过 {}", t.skip));
+}
+```
+
+**`if t.skip > 0` 那个判断是关键**：没有跳过的时候不要多打一句。
+摘要每多一个永远为 0 的数字，真正要紧的那个就少一分注意力。
+
+改完 `cargo test --test golden` 会红三个（三份计划里都有 SKIP 吗？
+自己跑一下看是几个）。读完 diff 再 `UPDATE_GOLDEN=1`。
+
+### 任务 C：加「跳过当前单元」
+
+**一个标志不够。** 理由就是第 6 节引的那段真实注释：
+
+跳过要复用同一套收尾路径，所以它也得设 `RUN_CANCELLED`；
+但单元边界上要把这个标志清掉才能继续下一个。
+于是「刚点了跳过、紧接着点停止」会被那次清零抹掉。
+
+最小可行的两个标志：
+
+```rust
+pub struct CancelFlag {
+    /// 「现在这个单元该收尾了」—— 跳过和停止都设它，单元边界清零
+    run_cancelled: Arc<AtomicBool>,
+    /// 「整轮真的要停」—— 只有停止设它，永不清零
+    stop_requested: Arc<AtomicBool>,
+}
+```
+
+执行循环：
+
+```rust
+if self.stop_requested() {
+    // 后面全部 SKIP
+} else if self.run_cancelled() {
+    self.clear_run_cancelled();   // 只清这一个
+    // 当前单元 SKIP，继续下一个
+}
+```
+
+**清零的范围要和意图的生命周期对齐。** 一次性的意图（跳过这一个）
+用可清零的标志，持久的意图（整轮停）用不清零的。
+
+## 第 20 课：黄金文件
+
+### 任务 A：钉住报错
+
+```rust
+#[test]
+fn 非法配置的报错() {
+    let err = cpe_mini::plan::load(std::path::Path::new("fixtures/plan_bad.json"))
+        .expect_err("这份计划就是用来报错的");
+    assert_golden("plan_bad.error.txt", &err);
+}
+```
+
+`expect_err` 是 `expect` 的反面：期待 `Err`，拿到 `Ok` 就 panic。
+用 `unwrap()` 写不出来这个意思。
+
+第一次跑要 `UPDATE_GOLDEN=1` 生成文件，然后**读一遍生成的内容** ——
+黄金文件的第一版是你唯一一次逐字读它的机会，
+后面每次都只会读 diff。
+
+### 任务 C：防住橡皮图章
+
+几种常见做法，各有各的漏：
+
+| 做法 | 挡得住 | 挡不住 |
+|---|---|---|
+| CI 上不认 `UPDATE_GOLDEN` | 「跑绿了就提交」 | 本地更新完再提交 |
+| 更新时要求在提交信息里写理由 | 无意识的更新 | 写一句「更新黄金文件」 |
+| 黄金文件列进 code review 必看清单 | 大部分 | 审的人也不看 |
+| 黄金文件控制在 50 行以内 | **根源** | 输出本来就长的情况 |
+
+最后一条最有效，也最容易被忽略：**diff 短到能一眼看完，人才会真的看。**
+一个三百行的黄金文件，更新它的人一定是闭着眼按的。

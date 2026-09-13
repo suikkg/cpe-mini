@@ -18,6 +18,7 @@
 //! executor 和 report 各写过一份判定，两份优先级不一致，出过两个真实缺陷。
 
 use crate::builder::Unit;
+use crate::cancel::CancelFlag;
 use crate::rate_window::{effective_rx_avg, RateWindow};
 use crate::reason::ReasonCode;
 use crate::verdict::{aggregate_verdict, rate_verdict, ExecutionStatus, Verdict, VerdictResult};
@@ -158,8 +159,95 @@ fn execute_leg(leg: &crate::builder::Leg, warmup_secs: usize) -> LegOutcome {
 }
 
 /// 跑一整份单元清单。
+///
+/// 这是 [`execute_plan_cancellable`] 的便捷版：给一个永远不会置位的标志。
 pub fn execute_plan(units: &[Unit]) -> Vec<UnitOutcome> {
-    units.iter().map(execute_unit).collect()
+    execute_plan_cancellable(units, &CancelFlag::new())
+}
+
+/// 跑一整份单元清单，中途可以被叫停。
+///
+/// ## 检查时机：只在单元边界
+///
+/// 每跑完一个单元问一次「要不要停」，不在单元中途问。理由写在
+/// [`crate::cancel`] 的模块注释里：收尾路径要跑完。
+///
+/// ## 被取消的单元不会从报告里消失
+///
+/// 这是这个函数最要紧的一件事，也是最容易写错的一件事。
+///
+/// 「停下来」的直觉实现是 `break`——剩下的单元干脆不产出结果。但
+/// [`crate::report::rows_from`] 是按**腿**摊平成行的：没有结果的单元
+/// 一行都不会有，报告里于是安安静静地少了十个测试项。
+///
+/// 少的那十个和「跑了但跳过」长得一模一样，跟上一轮做 `compare` 时
+/// 它们会被判成 `Disappeared`——而真相是「机器被人按停了」。
+///
+/// 所以取消之后的每个单元照样产出完整的腿，只是判定是 `SKIP`、
+/// 执行状态是 `CANCELLED`。**报告的行数只由计划决定，跟跑没跑完无关。**
+pub fn execute_plan_cancellable(units: &[Unit], cancel: &CancelFlag) -> Vec<UnitOutcome> {
+    let mut outcomes = Vec::with_capacity(units.len());
+    let mut stopped = false;
+
+    for unit in units {
+        // 一个单元只问一次：is_cancelled 会推进教学扳机的计数
+        if !stopped && cancel.is_cancelled() {
+            stopped = true;
+        }
+
+        outcomes.push(if stopped {
+            cancelled_unit(unit)
+        } else {
+            execute_unit(unit)
+        });
+    }
+
+    outcomes
+}
+
+/// 一个因为整轮被取消而没跑的单元长什么样。
+///
+/// 注意它**照样有腿**，只是每条腿都是 `SKIP` / `CANCELLED`。
+fn cancelled_unit(unit: &Unit) -> UnitOutcome {
+    let legs: Vec<LegOutcome> = unit
+        .legs
+        .iter()
+        .map(|leg| LegOutcome {
+            tag: leg.tag.clone(),
+            target_mbps: leg.target_mbps,
+            window: RateWindow {
+                rx_avg: None,
+                code: ReasonCode::None,
+                effective_samples: 0,
+                coverage: 0.0,
+            },
+            // 判定是 SKIP 不是 SETUP_ERROR：环境没出问题，是人喊停的。
+            // 写成 SETUP_ERROR 会让退出码变成 1，脚本就以为测试失败了。
+            verdict: VerdictResult::new(
+                Verdict::Skip,
+                ReasonCode::None,
+                "整轮测试被取消，这个单元没有执行",
+            ),
+            // ExecutionStatus 和 Verdict 是两件事：
+            // 「结论是跳过」和「过程是被取消的」分开记，排障时才知道
+            // 这个 SKIP 是计划里本来就要跳过的，还是被人按停的。
+            status: ExecutionStatus::Cancelled,
+            udp_loss: None,
+        })
+        .collect();
+
+    // 单元级判定照样走聚合，不在这里硬写 Skip——判定只有一份。
+    let verdict = aggregate_verdict(legs.iter().map(|l| (l.verdict.verdict, l.verdict.code)));
+
+    UnitOutcome {
+        unit_id: unit.id.clone(),
+        title: unit.title.clone(),
+        transport: unit.transport.clone(),
+        direction: unit.direction.clone(),
+        round: unit.round,
+        verdict,
+        legs,
+    }
 }
 
 #[cfg(test)]
@@ -201,6 +289,70 @@ mod tests {
     fn 跑一个(plan: &Plan) -> UnitOutcome {
         let units = build_units(plan);
         execute_unit(&units[0])
+    }
+
+    /// 三轮 × 一条规格 = 三个单元，用来看取消停在哪里。
+    fn 三轮计划() -> Plan {
+        let mut plan = 单条计划("ab", 100.0, vec![200.0; 6], vec![]);
+        plan.rounds = 3;
+        plan
+    }
+
+    #[test]
+    fn 没取消时跟原来完全一样() {
+        let units = build_units(&三轮计划());
+        let a = execute_plan(&units);
+        let b = execute_plan_cancellable(&units, &CancelFlag::new());
+        assert_eq!(a.len(), b.len());
+        for (x, y) in a.iter().zip(b.iter()) {
+            assert_eq!(x.unit_id, y.unit_id);
+            assert_eq!(x.verdict, y.verdict);
+        }
+    }
+
+    #[test]
+    fn 取消之后的单元判SKIP() {
+        let units = build_units(&三轮计划());
+        // 第 1 次检查（也就是第 2 个单元开跑前）扳机生效
+        let outs = execute_plan_cancellable(&units, &CancelFlag::trip_after_polls(1));
+
+        assert_eq!(outs[0].verdict, Verdict::Pass, "第一个单元在取消前跑完了");
+        assert_eq!(outs[1].verdict, Verdict::Skip);
+        assert_eq!(outs[2].verdict, Verdict::Skip);
+    }
+
+    #[test]
+    fn 被取消的单元一个都不许少() {
+        let units = build_units(&三轮计划());
+        let outs = execute_plan_cancellable(&units, &CancelFlag::trip_after_polls(0));
+
+        // 这是最要紧的一条：取消不等于「从报告里消失」。
+        // 写成 break 的话这里是 0，跟上一轮 compare 时全变成 Disappeared。
+        assert_eq!(outs.len(), units.len());
+        for (out, unit) in outs.iter().zip(units.iter()) {
+            assert_eq!(out.unit_id, unit.id);
+            assert_eq!(out.legs.len(), unit.legs.len(), "腿也不许少");
+        }
+    }
+
+    #[test]
+    fn 取消记在执行状态上而不是判定上() {
+        let units = build_units(&三轮计划());
+        let outs = execute_plan_cancellable(&units, &CancelFlag::trip_after_polls(0));
+
+        // 判定说「这个单元没有结论」，执行状态说「因为被人按停了」。
+        // 两者分开记，排障时才分得出「计划里本来就跳过」和「被取消」。
+        assert_eq!(outs[0].verdict, Verdict::Skip);
+        assert_eq!(outs[0].legs[0].status, ExecutionStatus::Cancelled);
+    }
+
+    #[test]
+    fn 取消不算失败() {
+        // SETUP_ERROR 会让退出码变成 1，脚本就以为测试挂了。
+        // 人按了停止不是测试失败。
+        let units = build_units(&三轮计划());
+        let outs = execute_plan_cancellable(&units, &CancelFlag::trip_after_polls(0));
+        assert!(outs.iter().all(|o| o.verdict != Verdict::SetupError));
     }
 
     #[test]

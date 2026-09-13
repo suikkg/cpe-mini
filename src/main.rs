@@ -9,7 +9,10 @@
 //! `main` 自己不干活：它把退出码交给 `real_main`，这样每个分支都能明确
 //! 返回 0 还是 1，而不是到处 `std::process::exit`。
 
-use cpe_mini::{compare, default_output, demo_plan_path, preview_plan, report, run_plan};
+use cpe_mini::cancel::CancelFlag;
+use cpe_mini::{
+    compare, default_output, demo_plan_path, preview_plan, report, run_plan_cancellable,
+};
 use std::path::PathBuf;
 
 fn main() {
@@ -22,7 +25,7 @@ fn real_main(args: Vec<String>) -> i32 {
     let mode = args.first().map(|s| s.as_str()).unwrap_or("");
 
     match mode {
-        "demo" => run_and_report(demo_plan_path(), default_output()),
+        "demo" => run_and_report(demo_plan_path(), default_output(), None),
 
         "plan" => {
             let Some(path) = args.get(1) else {
@@ -41,11 +44,17 @@ fn real_main(args: Vec<String>) -> i32 {
             let Some(path) = args.get(1) else {
                 return fail("run 后面要跟计划文件，例如：run fixtures/plan.json");
             };
+            // --cancel-after N：跑完 N 个单元就叫停（第 18 课的演示开关）
+            let cancel_after = match parse_cancel_after(&args) {
+                Ok(v) => v,
+                Err(e) => return fail(&e),
+            };
             let out = args
                 .get(2)
+                .filter(|a| !a.starts_with("--"))
                 .map(PathBuf::from)
                 .unwrap_or_else(default_output);
-            run_and_report(PathBuf::from(path), out)
+            run_and_report(PathBuf::from(path), out, cancel_after)
         }
 
         "report" => {
@@ -138,11 +147,39 @@ fn real_main(args: Vec<String>) -> i32 {
     }
 }
 
-fn run_and_report(plan_path: PathBuf, out_path: PathBuf) -> i32 {
-    let rows = match run_plan(&plan_path) {
+/// 解析 `--cancel-after N`。
+///
+/// 单独抽出来是为了能测：`parse` 和 `run` 分开，解析就不用起进程也能验。
+fn parse_cancel_after(args: &[String]) -> Result<Option<usize>, String> {
+    let Some(i) = args.iter().position(|a| a == "--cancel-after") else {
+        return Ok(None);
+    };
+    let Some(raw) = args.get(i + 1) else {
+        return Err("--cancel-after 后面要跟一个数字，例如：--cancel-after 2".into());
+    };
+    raw.parse::<usize>()
+        .map(Some)
+        .map_err(|_| format!("--cancel-after 要跟一个非负整数，当前是 `{raw}`"))
+}
+
+fn run_and_report(plan_path: PathBuf, out_path: PathBuf, cancel_after: Option<usize>) -> i32 {
+    // 没给 --cancel-after 时这个标志永远不置位，行为和以前一模一样。
+    let flag = match cancel_after {
+        Some(n) => CancelFlag::trip_after_polls(n),
+        None => CancelFlag::new(),
+    };
+
+    let rows = match run_plan_cancellable(&plan_path, &flag) {
         Ok(rows) => rows,
         Err(e) => return fail(&e),
     };
+
+    if flag.peek() {
+        println!(
+            "整轮测试在第 {} 个单元后被取消。\n",
+            cancel_after.unwrap_or(0)
+        );
+    }
 
     println!("{}", report::render(&rows));
 
@@ -179,6 +216,7 @@ fn help() -> String {
         "  cargo run -- demo                      跑内置样例计划",
         "  cargo run -- plan <计划文件>            只展开，看会跑成什么样",
         "  cargo run -- run <计划文件> [输出文件]   跑一份计划并存报告",
+        "       [--cancel-after N]              跑完 N 个单元就叫停（第 18 课）",
         "  cargo run -- report <报告文件>          读回报告重新渲染",
         "  cargo run -- compare <旧> <新>          对比两份报告，有回归返回 1",
         "  cargo run -- csv <报告文件> [输出]       导出 CSV（给 Excel 用）",
@@ -190,6 +228,7 @@ fn help() -> String {
         "  cargo run -- compare output/before.jsonl output/after.jsonl",
         "",
         "两轮跑的不是同一份计划时，加 --plan-changed。",
+        "被取消的单元不会从报告里消失，它们是 SKIP / CANCELLED。",
     ]
     .join("\n")
 }
