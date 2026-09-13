@@ -47,6 +47,8 @@ run 0 $CM compare /tmp/cpe-mini-v1.jsonl /tmp/cpe-mini-v1.jsonl   # 自己比自
 run 0 $CM run fixtures/plan_bidir.json /tmp/cpe-mini-cancel.jsonl --cancel-after 1  # 取消不算失败
 run 1 $CM run fixtures/plan.json /tmp/cpe-mini-c2.jsonl --cancel-after 99           # 没取消成，原样跑完
 run 1 $CM run fixtures/plan.json --cancel-after 甲                                  # 参数不是数字
+run 1 $CM run fixtures/plan.json --cancel-aftr 1                                   # 选项拼错了要报错，不能默默忽略
+run 1 $CM run a.json b.jsonl c.jsonl                                               # 位置参数太多
 run 1 $CM 飞天                                          # 不认识的命令
 
 echo "== 扩展课的骨架和答案还能编译 =="

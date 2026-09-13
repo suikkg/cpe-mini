@@ -157,8 +157,17 @@ struct / enum / impl        Option / Result / match
 | 13 | 把模拟执行换成真跑 `ping`，学进程启动与输出解析 | `src/ping.rs` |
 | 14 | 用 `tiny_http`（真实项目同款）加最小 Web 界面 | `src/master/webui/` |
 
-`scaffold/` 里有 13 / 14 两课的骨架文件（留了 `TODO`），
-完整答案在 `solutions/13_ping.md` 和 `solutions/14_webui.md`。
+要自己补 `todo!()` 的一共三课 —— 13、14 和 19。骨架都在 **`scaffold/`**
+（测试已经写好），完整答案在 `solutions/`：
+
+| 课 | 骨架 | 答案 |
+|---|---|---|
+| 13 | `scaffold/ping.rs`（7 个测试） | `solutions/13_ping.md` + `ping_answer.rs` |
+| 14 | `scaffold/webui.rs` + `.html`（6 个测试） | `solutions/14_webui.md` + `webui_answer.rs` |
+| 19 | `scaffold/aggregate_special.rs`（3 道题 / 10 个测试） | `solutions/aggregate_special_answer.rs` |
+
+`./check.sh` 每次都会把骨架和答案拷进临时 crate 重新编译一遍 ——
+它们不在主 crate 里，不这么做就会随主代码改动悄悄烂掉。
 
 ### 关于第 12 课
 
@@ -184,7 +193,7 @@ struct / enum / impl        Option / Result / match
 - [ ] 11 report 与 JSONL
 - [ ] 12 毕业考：加一个字段 ← 没有答案
 
-下面五课没有先后关系，挑感兴趣的做：
+下面八课没有先后关系，挑感兴趣的做：
 
 - [ ] 15 对比两份报告
 - [ ] 16 诊断通道：丢包不改判定
@@ -299,7 +308,7 @@ cargo run -- --help                     # 用法
 
 ```bash
 ./check.sh                # 一键自检：fmt + clippy + 全部测试
-cargo test                # 103 个测试
+cargo test                # 111 个测试
 cargo test --lib verdict  # 只跑判定模块的 10 个
 cargo test --lib compare  # 只跑对比模块的 8 个
 cargo test --test golden  # 只跑黄金文件那 6 个（第 20 课）

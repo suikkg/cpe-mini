@@ -41,20 +41,19 @@ fn real_main(args: Vec<String>) -> i32 {
         }
 
         "run" => {
-            let Some(path) = args.get(1) else {
-                return fail("run 后面要跟计划文件，例如：run fixtures/plan.json");
-            };
-            // --cancel-after N：跑完 N 个单元就叫停（第 18 课的演示开关）
-            let cancel_after = match parse_cancel_after(&args) {
-                Ok(v) => v,
+            let parsed = match parse_run_args(&args[1..]) {
+                Ok(p) => p,
                 Err(e) => return fail(&e),
             };
-            let out = args
-                .get(2)
-                .filter(|a| !a.starts_with("--"))
+            let Some(path) = parsed.positional.first() else {
+                return fail("run 后面要跟计划文件，例如：run fixtures/plan.json");
+            };
+            let out = parsed
+                .positional
+                .get(1)
                 .map(PathBuf::from)
                 .unwrap_or_else(default_output);
-            run_and_report(PathBuf::from(path), out, cancel_after)
+            run_and_report(PathBuf::from(path), out, parsed.cancel_after)
         }
 
         "report" => {
@@ -147,19 +146,77 @@ fn real_main(args: Vec<String>) -> i32 {
     }
 }
 
-/// 解析 `--cancel-after N`。
+/// `run` 的参数拆开之后长这样。
+#[derive(Debug, PartialEq)]
+struct RunArgs {
+    /// 位置参数，按出现顺序：计划文件、输出文件
+    positional: Vec<String>,
+    /// `--cancel-after N`，没给就是 `None`
+    cancel_after: Option<usize>,
+}
+
+/// 解析 `run` 后面的全部参数。
 ///
-/// 单独抽出来是为了能测：`parse` 和 `run` 分开，解析就不用起进程也能验。
-fn parse_cancel_after(args: &[String]) -> Result<Option<usize>, String> {
-    let Some(i) = args.iter().position(|a| a == "--cancel-after") else {
-        return Ok(None);
-    };
-    let Some(raw) = args.get(i + 1) else {
-        return Err("--cancel-after 后面要跟一个数字，例如：--cancel-after 2".into());
-    };
-    raw.parse::<usize>()
-        .map(Some)
-        .map_err(|_| format!("--cancel-after 要跟一个非负整数，当前是 `{raw}`"))
+/// ## 为什么不用「第 2 个参数就是输出文件」那种写法
+///
+/// 因为选项可以插在位置参数中间：
+///
+/// ```text
+/// run 计划.json --cancel-after 1 输出.jsonl
+/// ```
+///
+/// 按位置取的话，`args[2]` 是 `--cancel-after`，输出路径就被**默默忽略**了，
+/// 报告写到默认位置，而且没有任何提示。用户下次来问「我指定的文件怎么是空的」。
+///
+/// 同理，不认识的选项要**当场报错**，不能跳过。`--cancel-aftr` 拼错一个字母
+/// 就静默地不生效，是这个项目一直在防的那类「安静的错误」。
+///
+/// ## 为什么单独抽成一个函数
+///
+/// 为了能测。`parse` 和 `run` 分开，解析就不用起进程、不用写文件也能验 ——
+/// 和扩展课 13 那条「`parse` 必须和进程启动分开」是同一条规矩。
+fn parse_run_args(args: &[String]) -> Result<RunArgs, String> {
+    let mut positional = Vec::new();
+    let mut cancel_after = None;
+    let mut i = 0;
+
+    while i < args.len() {
+        let arg = &args[i];
+        match arg.as_str() {
+            "--cancel-after" => {
+                let Some(raw) = args.get(i + 1) else {
+                    return Err("--cancel-after 后面要跟一个数字，例如：--cancel-after 2".into());
+                };
+                cancel_after = Some(
+                    raw.parse::<usize>()
+                        .map_err(|_| format!("--cancel-after 要跟一个非负整数，当前是 `{raw}`"))?,
+                );
+                i += 2;
+            }
+            other if other.starts_with("--") => {
+                return Err(format!(
+                    "不认识的选项：{other}\n\nrun 只认 --cancel-after N"
+                ));
+            }
+            other => {
+                positional.push(other.to_string());
+                i += 1;
+            }
+        }
+    }
+
+    if positional.len() > 2 {
+        return Err(format!(
+            "run 最多两个位置参数（计划文件、输出文件），给了 {} 个：{}",
+            positional.len(),
+            positional.join(" ")
+        ));
+    }
+
+    Ok(RunArgs {
+        positional,
+        cancel_after,
+    })
 }
 
 fn run_and_report(plan_path: PathBuf, out_path: PathBuf, cancel_after: Option<usize>) -> i32 {
@@ -231,4 +288,72 @@ fn help() -> String {
         "被取消的单元不会从报告里消失，它们是 SKIP / CANCELLED。",
     ]
     .join("\n")
+}
+
+#[cfg(test)]
+// 测试名用中文；夹着大写 ASCII 会触发 non_snake_case。
+#[allow(non_snake_case)]
+mod tests {
+    use super::*;
+
+    fn args(list: &[&str]) -> Vec<String> {
+        list.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn 只给计划文件() {
+        let p = parse_run_args(&args(&["plan.json"])).unwrap();
+        assert_eq!(p.positional, vec!["plan.json"]);
+        assert_eq!(p.cancel_after, None);
+    }
+
+    #[test]
+    fn 计划加输出() {
+        let p = parse_run_args(&args(&["plan.json", "out.jsonl"])).unwrap();
+        assert_eq!(p.positional, vec!["plan.json", "out.jsonl"]);
+    }
+
+    #[test]
+    fn 选项插在位置参数中间也要认得出输出路径() {
+        // 这是抽成 parse_run_args 的理由：按 args[2] 取的话，
+        // 输出路径会被默默忽略，报告写到默认位置且没有任何提示。
+        let p = parse_run_args(&args(&["plan.json", "--cancel-after", "1", "out.jsonl"])).unwrap();
+        assert_eq!(p.positional, vec!["plan.json", "out.jsonl"]);
+        assert_eq!(p.cancel_after, Some(1));
+    }
+
+    #[test]
+    fn 选项放最后也一样() {
+        let p = parse_run_args(&args(&["plan.json", "out.jsonl", "--cancel-after", "2"])).unwrap();
+        assert_eq!(p.positional, vec!["plan.json", "out.jsonl"]);
+        assert_eq!(p.cancel_after, Some(2));
+    }
+
+    #[test]
+    fn 拼错的选项要报错不能静默忽略() {
+        // --cancel-aftr 少一个字母。静默跳过的话，用户以为设了取消，
+        // 结果整轮跑完——这就是这个项目一直在防的「安静的错误」。
+        let e = parse_run_args(&args(&["plan.json", "--cancel-aftr", "1"])).unwrap_err();
+        assert!(e.contains("不认识的选项"), "报错要说清楚：{e}");
+        assert!(e.contains("--cancel-aftr"), "报错要带上用户敲的原话：{e}");
+    }
+
+    #[test]
+    fn 选项后面缺数字() {
+        let e = parse_run_args(&args(&["plan.json", "--cancel-after"])).unwrap_err();
+        assert!(e.contains("要跟一个数字"), "{e}");
+    }
+
+    #[test]
+    fn 选项后面不是数字() {
+        let e = parse_run_args(&args(&["plan.json", "--cancel-after", "甲"])).unwrap_err();
+        // 报错要带上用户敲的原话，不然他不知道自己敲错了什么
+        assert!(e.contains('甲'), "{e}");
+    }
+
+    #[test]
+    fn 位置参数太多要报错() {
+        let e = parse_run_args(&args(&["a.json", "b.jsonl", "c.jsonl"])).unwrap_err();
+        assert!(e.contains("最多两个"), "{e}");
+    }
 }
